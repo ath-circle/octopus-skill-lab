@@ -89,6 +89,14 @@ creates an OTLP trace and records its trace ID beside the exact immutable Skill 
 an optional adapter (`PROMPTFOO_ENABLED=false` by default) for repeatable regression
 suites, but it never silently replaces the blind Codex gate.
 
+External engines are deliberately installed outside the repository in `.tools/`.
+Point `SKILLALCHEMY_SKILL_PATH` at `.tools/skillalchemy` and
+`SKILLCREATOR_SKILL_PATH` at `.tools/anthropic-skills/skills/skill-creator` after
+installing those upstream packages. Install DisCo separately as `@arex-skill/disco`
+and set `AREX_DISCO_BIN` to its executable. Health checks stay unavailable until both
+the executable and the matching upstream package are configured; this is intentional
+fail-closed behavior.
+
 Future optimization workers must obtain examples through the `get_dev_eval_cases`
 database function, which never returns holdout cases.
 

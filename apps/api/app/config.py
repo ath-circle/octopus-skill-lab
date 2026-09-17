@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     skill_factory_engine_mode: str = Field(default="fixture", alias="SKILL_FACTORY_ENGINE_MODE")
     arex_disco_bin: str = Field(default="disco", alias="AREX_DISCO_BIN")
     skillalchemy_agent_bin: str = Field(default="codex", alias="SKILLALCHEMY_AGENT_BIN")
+    skillalchemy_skill_path: str = Field(default="", alias="SKILLALCHEMY_SKILL_PATH")
     skillcreator_agent_bin: str = Field(default="codex", alias="SKILLCREATOR_AGENT_BIN")
     skillcreator_skill_path: str = Field(default="", alias="SKILLCREATOR_SKILL_PATH")
     codex_bin: str = Field(default="codex", alias="CODEX_BIN")
