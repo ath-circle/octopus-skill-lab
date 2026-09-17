@@ -11,8 +11,8 @@ to Supabase using a server-only secret key.
 
 V1.1 adds a durable local job queue with fixture, AREX/Disco, and SkillAlchemy
 adapters. V1.2 adds typed personal evidence, versioned dev/holdout datasets, immutable
-datasets once evaluated, deterministic fixture evaluation, and persisted release-gate
-decisions. A non-passed version still needs a manual override with an audit reason.
+datasets once evaluated, isolated baseline/candidate Codex evaluation, and persisted
+release-gate decisions. A non-passed version still needs a manual override with an audit reason.
 
 V1.3 adds `POST /jobs/personalize`: it creates an unpromoted candidate from a chosen
 baseline, selected evidence, and explicitly selected **dev** datasets. The worker
@@ -63,16 +63,31 @@ used by the migration script and should have Supabase `database_write` permissio
 uv run pytest
 ```
 
-Tests use in-memory fixtures and do not call Supabase or a model provider.
+Tests use in-memory fakes and do not call Supabase or a model provider.
 
 ## Evaluation contract
 
 Create all cases before calling `POST /eval-runs`. Running an evaluation locks its
 dataset permanently; changes require a new dataset version. Release gates require a
-functional holdout score of at least 0.8, require a personal holdout when one exists,
-and reject any baseline regression. The fixture evaluator only consumes explicit
-`fixture_candidate_pass` / `fixture_baseline_pass` case assertions. It is a test
-harness, not a claim that an external model was evaluated.
+functional holdout pass rate of at least 0.8, require a personal holdout when one exists,
+and reject any baseline regression. Evaluation requires a baseline and the `codex`
+engine; it never falls back to fixture assertions. Each case runs candidate and baseline
+Skills in separate ephemeral Codex workspaces. Deterministic checks run first. When they
+do not decide the case, a third ephemeral Codex grader sees only the task, rubric, and
+randomized anonymous outputs A/B. Executor and grader transcripts are persisted only
+after every isolated role completes.
+
+Cases may define `expectations.rubric` and `expectations.deterministic_checks`. Supported
+deterministic check types are `contains`, `not_contains`, `equals`, `regex`, `valid_json`,
+`min_length`, and `max_length`. A model-graded case must provide a rubric or
+`expected_output`; missing grading inputs fail the run closed.
+
+Phoenix is a local optional service, not the registry: start it with
+`PHOENIX_HOST=127.0.0.1 PHOENIX_PORT=6006 uv run phoenix serve`. `POST /executions`
+creates an OTLP trace and records its trace ID beside the exact immutable Skill version;
+`POST /executions/{id}/feedback` stores operator feedback. Promptfoo is represented by
+an optional adapter (`PROMPTFOO_ENABLED=false` by default) for repeatable regression
+suites, but it never silently replaces the blind Codex gate.
 
 Future optimization workers must obtain examples through the `get_dev_eval_cases`
 database function, which never returns holdout cases.

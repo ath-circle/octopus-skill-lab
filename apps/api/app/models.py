@@ -147,13 +147,13 @@ class EvalCase(EvalCaseCreate):
 class EvalRunRequest(BaseModel):
     skill_version_id: UUID
     dataset_id: UUID
-    baseline_version_id: UUID | None = None
-    engine: str = Field(default="fixture", pattern=r"^fixture$")
+    baseline_version_id: UUID
+    engine: str = Field(default="codex", pattern=r"^codex$")
 
 
 class BatchEvalRequest(BaseModel):
-    baseline_version_id: UUID | None = None
-    engine: str = Field(default="fixture", pattern=r"^fixture$")
+    baseline_version_id: UUID
+    engine: str = Field(default="codex", pattern=r"^codex$")
 
 
 class EvalRun(BaseModel):
@@ -182,6 +182,30 @@ class EvalGateDecision(BaseModel):
 class BatchEvalResult(BaseModel):
     runs: list[EvalRun]
     decision: EvalGateDecision
+
+
+class ExecutionCreate(BaseModel):
+    skill_version_id: UUID
+    input_summary: str = Field(min_length=1, max_length=10_000)
+    output_summary: str | None = Field(default=None, max_length=10_000)
+    status: str = Field(default="succeeded", pattern=r"^(running|succeeded|failed|cancelled)$")
+
+
+class ExecutionFeedback(BaseModel):
+    user_rating: int | None = Field(default=None, ge=1, le=5)
+    feedback: str | None = Field(default=None, max_length=10_000)
+
+
+class Execution(BaseModel):
+    id: UUID
+    skill_version_id: UUID
+    external_trace_id: str | None = None
+    input_summary: str
+    output_summary: str | None = None
+    status: str
+    user_rating: int | None = None
+    feedback: str | None = None
+    created_at: datetime
 
 
 class Job(BaseModel):

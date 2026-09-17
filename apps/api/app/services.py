@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from .artifacts import NormalizedArtifact, SkillArchiveNormalizer, SupabaseArtifactStore
+from .benchmark import BenchmarkRunner
 from .gating import evaluate_gate
 from .models import EvalCase, EvalGateDecision, EvalRun, EvalRunRequest, PromoteRequest, Release, Skill, SkillCreate, SkillVersion, VersionStatus
 from .repository import SupabaseRegistryRepository
@@ -146,10 +147,12 @@ class LifecycleService:
 
 
 class EvaluationService:
-    """Deterministic V1 evaluator; model-based graders can replace it behind this contract."""
+    """Persist isolated candidate/baseline Codex benchmarks and gate results."""
 
-    def __init__(self, repository) -> None:
+    def __init__(self, repository, artifacts, benchmark: BenchmarkRunner) -> None:
         self.repository = repository
+        self.artifacts = artifacts
+        self.benchmark = benchmark
 
     async def run(self, request: EvalRunRequest) -> tuple[EvalRun, EvalGateDecision]:
         candidate = await self.repository.get_version(request.skill_version_id)
@@ -158,10 +161,11 @@ class EvaluationService:
             raise LifecycleError("Skill version or evaluation dataset was not found.")
         if dataset.skill_id is not None and dataset.skill_id != candidate.skill_id:
             raise LifecycleError("Evaluation dataset belongs to another Skill.")
-        if request.baseline_version_id:
-            baseline = await self.repository.get_version(request.baseline_version_id)
-            if baseline is None or baseline.skill_id != candidate.skill_id:
-                raise LifecycleError("Baseline version must belong to the same Skill.")
+        baseline = await self.repository.get_version(request.baseline_version_id)
+        if baseline is None or baseline.skill_id != candidate.skill_id:
+            raise LifecycleError("Baseline version must belong to the same Skill.")
+        if baseline.id == candidate.id:
+            raise LifecycleError("Candidate and baseline must be different Skill versions.")
 
         # First use freezes a dataset; later candidate runs must be able to reuse
         # the same immutable holdout rather than treating the lock as an error.
@@ -171,23 +175,13 @@ class EvaluationService:
         if not cases:
             raise LifecycleError("An evaluation dataset needs at least one case.")
         run = await self.repository.create_eval_run(
-            {"skill_version_id": str(candidate.id), "baseline_version_id": str(request.baseline_version_id) if request.baseline_version_id else None,
-             "dataset_id": str(dataset.id), "engine": request.engine, "grader_metadata": {"mode": "deterministic-fixture"},
+            {"skill_version_id": str(candidate.id), "baseline_version_id": str(baseline.id),
+             "dataset_id": str(dataset.id), "engine": request.engine,
+             "grader_metadata": self.benchmark.metadata,
              "status": "running", "started_at": datetime.now(UTC).isoformat()}
         )
         try:
-            candidate_passes, baseline_passes = 0, 0
-            for case in cases:
-                candidate_pass, baseline_pass = self._fixture_result(case, bool(request.baseline_version_id))
-                candidate_passes += candidate_pass
-                baseline_passes += baseline_pass
-                await self.repository.create_eval_case_result(
-                    {"eval_run_id": str(run.id), "eval_case_id": str(case.id), "passed": candidate_pass,
-                     "score": 1 if candidate_pass else 0,
-                     "grader_output": {"grader": "fixture", "candidate_pass": candidate_pass, "baseline_pass": baseline_pass}}
-                )
-            summary = {"case_count": len(cases), "candidate_score": candidate_passes / len(cases),
-                       "baseline_score": baseline_passes / len(cases) if request.baseline_version_id else None}
+            summary = await self._run_codex(run.id, cases, candidate, baseline)
             run = await self.repository.finish_eval_run(run.id, status="succeeded", summary=summary)
         except Exception:
             await self.repository.finish_eval_run(run.id, status="failed", summary={})
@@ -206,7 +200,15 @@ class EvaluationService:
         await self.repository.set_version_status(candidate.id, "passed" if gate.decision == "passed" else ("failed" if gate.decision == "failed" else "candidate"))
         return run, decision
 
-    async def run_holdouts(self, version_id: UUID, *, baseline_version_id: UUID | None, engine: str) -> tuple[list[EvalRun], EvalGateDecision]:
+    async def _run_codex(self, run_id: UUID, cases: list[EvalCase], candidate: SkillVersion, baseline: SkillVersion) -> dict:
+        candidate_archive = await self.artifacts.get(candidate.artifact_storage_path)
+        baseline_archive = await self.artifacts.get(baseline.artifact_storage_path)
+        results = [await self.benchmark.run_case(run_id=run_id, case=case, candidate_archive=candidate_archive, baseline_archive=baseline_archive) for case in cases]
+        for case, result in zip(cases, results, strict=True):
+            await self.repository.create_eval_case_result({"eval_run_id": str(run_id), "eval_case_id": str(case.id), "passed": result.candidate_pass, "score": result.candidate_score, "grader_output": result.grader_output, "candidate_output_path": result.candidate_output_path, "baseline_output_path": result.baseline_output_path, "latency_ms": result.latency_ms})
+        return {"case_count": len(cases), "candidate_score": sum(item.candidate_pass for item in results) / len(results), "baseline_score": sum(item.baseline_pass for item in results) / len(results), "candidate_wins": sum(item.winner == "candidate" for item in results), "baseline_wins": sum(item.winner == "baseline" for item in results), "ties": sum(item.winner == "tie" for item in results), "mode": "isolated-blind-codex"}
+
+    async def run_holdouts(self, version_id: UUID, *, baseline_version_id: UUID, engine: str) -> tuple[list[EvalRun], EvalGateDecision]:
         candidate = await self.repository.get_version(version_id)
         if candidate is None:
             raise LifecycleError("Skill version was not found.")
@@ -223,10 +225,3 @@ class EvaluationService:
         decision = await self.repository.get_latest_gate_decision(candidate.id)
         assert decision is not None
         return runs, decision
-
-    @staticmethod
-    def _fixture_result(case: EvalCase, has_baseline: bool) -> tuple[bool, bool]:
-        expectations = case.expectations
-        candidate = bool(expectations.get("fixture_candidate_pass", expectations.get("fixture_pass", True)))
-        baseline = bool(expectations.get("fixture_baseline_pass", candidate)) if has_baseline else False
-        return candidate, baseline

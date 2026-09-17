@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from .artifacts import ArtifactValidationError, SkillArchiveNormalizer, SupabaseArtifactStore
+from .benchmark import BenchmarkError, CodexBenchmarkRunner, CodexCliClient
 from .config import Settings, get_settings
 from .models import (
     CreateJobRequest,
@@ -21,6 +22,9 @@ from .models import (
     EvalRunRequest,
     EvidenceCreate,
     EvidenceItem,
+    Execution,
+    ExecutionCreate,
+    ExecutionFeedback,
     FuseRequest,
     ImportResult,
     Job,
@@ -35,6 +39,7 @@ from .models import (
     SkillVersion,
 )
 from .repository import RepositoryError, SupabaseRegistryRepository
+from .phoenix import PhoenixTraceClient, PhoenixUnavailable
 from .services import EvaluationService, LifecycleError, LifecycleService
 from .safety import redact_secrets
 
@@ -60,11 +65,20 @@ def get_service() -> LifecycleService:
 
 @lru_cache
 def get_evaluation_service() -> EvaluationService:
-    return EvaluationService(get_service().repository)
+    settings = get_settings()
+    runner = CodexBenchmarkRunner(
+        CodexCliClient(
+            settings.codex_bin,
+            model=None,
+            timeout_seconds=settings.codex_benchmark_timeout_seconds,
+        ),
+        Path(settings.benchmark_workspace_root),
+    )
+    return EvaluationService(get_service().repository, get_service().artifacts, runner)
 
 
 def translate_error(exc: Exception) -> HTTPException:
-    if isinstance(exc, (ArtifactValidationError, LifecycleError)):
+    if isinstance(exc, (ArtifactValidationError, BenchmarkError, LifecycleError, PhoenixUnavailable)):
         return HTTPException(status_code=422, detail=str(exc))
     if isinstance(exc, RepositoryError):
         return HTTPException(status_code=502, detail="The registry is currently unavailable.")
@@ -74,6 +88,11 @@ def translate_error(exc: Exception) -> HTTPException:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@lru_cache
+def get_phoenix() -> PhoenixTraceClient:
+    return PhoenixTraceClient(get_settings())
 
 
 @app.get("/skills", response_model=list[Skill])
@@ -217,6 +236,7 @@ async def engine_health() -> dict[str, dict[str, str | bool]]:
     from adapters.fixture import FixtureSkillEngine
     from adapters.skillalchemy import SkillAlchemyAdapter
     from adapters.skillcreator import AnthropicSkillCreatorAdapter
+    from adapters.promptfoo import PromptfooAdapter
 
     settings = get_settings()
     adapters = {
@@ -224,11 +244,15 @@ async def engine_health() -> dict[str, dict[str, str | bool]]:
         "arex": ArexDiscoAdapter(settings.arex_disco_bin),
         "skillalchemy": SkillAlchemyAdapter(settings.skillalchemy_agent_bin),
         "skillcreator": AnthropicSkillCreatorAdapter(settings.skillcreator_agent_bin, settings.skillcreator_skill_path),
+        "promptfoo": PromptfooAdapter(settings.promptfoo_bin, settings.promptfoo_enabled),
     }
     health = {}
     for engine, adapter in adapters.items():
         result = await adapter.healthcheck()
         health[engine] = {"available": result.available, "detail": result.detail}
+    import shutil
+    codex_path = shutil.which(settings.codex_bin)
+    health["codex_benchmark"] = {"available": bool(codex_path), "detail": f"{settings.codex_bin}: {codex_path or 'not found'}"}
     return health
 
 
@@ -314,6 +338,52 @@ async def run_evaluation(
     try:
         run, _ = await evaluator.run(request)
         return run
+    except Exception as exc:
+        raise translate_error(exc) from exc
+
+
+@app.post("/executions", response_model=Execution, status_code=201)
+async def create_execution(
+    request: ExecutionCreate, service: LifecycleService = Depends(get_service), phoenix: PhoenixTraceClient = Depends(get_phoenix)
+) -> Execution:
+    try:
+        if await service.repository.get_version(request.skill_version_id) is None:
+            raise HTTPException(status_code=404, detail="Skill version was not found.")
+        trace_id = await phoenix.record_execution(
+            skill_version_id=str(request.skill_version_id), input_summary=request.input_summary,
+            output_summary=request.output_summary, status=request.status,
+        )
+        return await service.repository.create_execution({**request.model_dump(mode="json"), "external_trace_id": trace_id})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise translate_error(exc) from exc
+
+
+@app.get("/executions/{execution_id}", response_model=Execution)
+async def get_execution(execution_id: UUID, service: LifecycleService = Depends(get_service)) -> Execution:
+    try:
+        execution = await service.repository.get_execution(execution_id)
+        if execution is None:
+            raise HTTPException(status_code=404, detail="Execution was not found.")
+        return execution
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise translate_error(exc) from exc
+
+
+@app.post("/executions/{execution_id}/feedback", response_model=Execution)
+async def record_execution_feedback(
+    execution_id: UUID, request: ExecutionFeedback, service: LifecycleService = Depends(get_service)
+) -> Execution:
+    try:
+        execution = await service.repository.update_execution_feedback(execution_id, request.model_dump(exclude_none=True))
+        if execution is None:
+            raise HTTPException(status_code=404, detail="Execution was not found.")
+        return execution
+    except HTTPException:
+        raise
     except Exception as exc:
         raise translate_error(exc) from exc
 

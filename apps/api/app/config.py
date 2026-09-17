@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     skillalchemy_agent_bin: str = Field(default="codex", alias="SKILLALCHEMY_AGENT_BIN")
     skillcreator_agent_bin: str = Field(default="codex", alias="SKILLCREATOR_AGENT_BIN")
     skillcreator_skill_path: str = Field(default="", alias="SKILLCREATOR_SKILL_PATH")
+    codex_bin: str = Field(default="codex", alias="CODEX_BIN")
+    codex_benchmark_timeout_seconds: int = Field(default=300, alias="CODEX_BENCHMARK_TIMEOUT_SECONDS")
+    benchmark_workspace_root: str = Field(default="data/evaluations", alias="BENCHMARK_WORKSPACE_ROOT")
+    phoenix_base_url: str = Field(default="http://127.0.0.1:6006", alias="PHOENIX_BASE_URL")
+    phoenix_collector_endpoint: str = Field(default="http://127.0.0.1:6006/v1/traces", alias="PHOENIX_COLLECTOR_ENDPOINT")
+    phoenix_project_name: str = Field(default="octopus-skill-lab", alias="PHOENIX_PROJECT_NAME")
+    promptfoo_bin: str = Field(default="promptfoo", alias="PROMPTFOO_BIN")
+    promptfoo_enabled: bool = Field(default=False, alias="PROMPTFOO_ENABLED")
 
     @property
     def supabase_url(self) -> str:

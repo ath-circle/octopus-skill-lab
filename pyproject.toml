@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Skill lifecycle control plane"
 requires-python = ">=3.14"
 dependencies = [
+  "arize-phoenix>=20.13.0",
   "fastapi>=0.120,<1",
   "httpx>=0.28,<1",
   "pydantic-settings>=2.11,<3",

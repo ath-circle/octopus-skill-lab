@@ -11,6 +11,7 @@ from .models import (
     EvalGateDecision,
     EvalRun,
     EvidenceItem,
+    Execution,
     Job,
     Release,
     Skill,
@@ -157,6 +158,20 @@ class SupabaseRegistryRepository:
 
     async def create_eval_case_result(self, values: dict[str, Any]) -> None:
         await self._request("POST", "eval_case_results", json=values)
+
+    async def create_execution(self, values: dict[str, Any]) -> Execution:
+        rows = await self._request("POST", "executions", json=values, prefer="return=representation")
+        return Execution.model_validate(rows[0])
+
+    async def get_execution(self, execution_id: UUID) -> Execution | None:
+        rows = await self._request("GET", "executions", params={"select": "*", "id": f"eq.{execution_id}"})
+        return Execution.model_validate(rows[0]) if rows else None
+
+    async def update_execution_feedback(self, execution_id: UUID, values: dict[str, Any]) -> Execution | None:
+        rows = await self._request(
+            "PATCH", "executions", params={"id": f"eq.{execution_id}"}, json=values, prefer="return=representation"
+        )
+        return Execution.model_validate(rows[0]) if rows else None
 
     async def list_eval_runs_for_version(self, version_id: UUID) -> list[dict[str, Any]]:
         rows = await self._request(
