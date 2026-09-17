@@ -24,6 +24,14 @@ versions and recording `fused_from` lineage for every source. Personalization no
 an explicit `skillcreator` adapter for the upstream Anthropic Skill Creator package;
 it remains unavailable until its local package directory is deliberately configured.
 
+V1.5 completes the local runtime loop: external engine packages are copied into each
+job workspace before invocation, every engine subprocess has a bounded timeout, and a
+stopped worker records its claimed job as failed rather than leaving it running. The
+benchmark path is intentionally separate from those authoring engines: local Codex
+executes baseline and candidate independently, then a new blind Codex invocation
+grades anonymous outputs. A passing gate makes a candidate eligible for promotion; it
+does not promote it automatically.
+
 ## Prerequisites
 
 - Node.js 22+ and pnpm 11+
@@ -99,6 +107,18 @@ fail-closed behavior.
 
 Future optimization workers must obtain examples through the `get_dev_eval_cases`
 database function, which never returns holdout cases.
+
+## Local V1 runtime checklist
+
+Run authoring jobs with `SKILL_FACTORY_ENGINE_MODE=live`; fixture mode is reserved for
+automated tests. Each live adapter fails closed when its executable or staged upstream
+package is missing. `ENGINE_TIMEOUT_SECONDS` bounds authoring jobs and
+`CODEX_BENCHMARK_TIMEOUT_SECONDS` separately bounds every executor/grader role.
+
+AREX uses the standalone DisCo executable and therefore requires its own provider
+authentication (for example, `disco` followed by `/login`); it does not inherit the
+Codex desktop login. Do not substitute a fixture result if that authentication is not
+available.
 
 ## Candidate personalization
 

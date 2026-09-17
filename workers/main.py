@@ -76,6 +76,12 @@ class JobWorker:
                     "logs": {"stdout": str(result.stdout_path), "stderr": str(result.stderr_path)},
                 },
             )
+        except asyncio.CancelledError:
+            # A claimed job must never remain "running" when an operator stops
+            # this local worker. Preserve a truthful terminal record, then let
+            # cancellation propagate so process shutdown still behaves normally.
+            await self.repository.finish_job(job.id, "failed", error="Worker interrupted before job completion.")
+            raise
         except Exception as exc:
             await self.repository.finish_job(job.id, "failed", error=redact(str(exc)))
         return True
