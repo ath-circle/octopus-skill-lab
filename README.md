@@ -19,6 +19,11 @@ baseline, selected evidence, and explicitly selected **dev** datasets. The worke
 extracts the immutable baseline package into its isolated workspace, registers the
 candidate as a new immutable version, and records `personalized_from` lineage.
 
+V1.4 adds `POST /jobs/fuse`, creating a new Skill from two or more immutable source
+versions and recording `fused_from` lineage for every source. Personalization now has
+an explicit `skillcreator` adapter for the upstream Anthropic Skill Creator package;
+it remains unavailable until its local package directory is deliberately configured.
+
 ## Prerequisites
 
 - Node.js 22+ and pnpm 11+

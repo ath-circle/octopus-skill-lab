@@ -21,6 +21,7 @@ from .models import (
     EvalRunRequest,
     EvidenceCreate,
     EvidenceItem,
+    FuseRequest,
     ImportResult,
     Job,
     OpenWorldRequest,
@@ -154,6 +155,27 @@ async def queue_personalization(request: PersonalizeRequest, service: LifecycleS
         raise translate_error(exc) from exc
 
 
+@app.post("/jobs/fuse", response_model=Job, status_code=201)
+async def queue_fusion(request: FuseRequest, service: LifecycleService = Depends(get_service)) -> Job:
+    """Create a new candidate Skill from two or more immutable source versions."""
+    try:
+        if len(set(request.source_version_ids)) != len(request.source_version_ids):
+            raise HTTPException(status_code=422, detail="Fusion sources must be unique versions.")
+        sources = [await service.repository.get_version(version_id) for version_id in request.source_version_ids]
+        if any(source is None for source in sources):
+            raise HTTPException(status_code=404, detail="One or more source versions were not found.")
+        payload = {
+            "source_version_ids": [str(source.id) for source in sources if source],
+            "skill_slug": request.skill_slug, "skill_name": request.skill_name,
+            "description": request.description, "objective": request.objective,
+        }
+        return await queue_job("fuse", request.model_copy(update={"input": payload}), service)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise translate_error(exc) from exc
+
+
 @app.get("/jobs/{job_id}", response_model=Job)
 async def get_job(job_id: UUID, service: LifecycleService = Depends(get_service)) -> Job:
     try:
@@ -194,12 +216,14 @@ async def engine_health() -> dict[str, dict[str, str | bool]]:
     from adapters.arex import ArexDiscoAdapter
     from adapters.fixture import FixtureSkillEngine
     from adapters.skillalchemy import SkillAlchemyAdapter
+    from adapters.skillcreator import AnthropicSkillCreatorAdapter
 
     settings = get_settings()
     adapters = {
         "fixture": FixtureSkillEngine(),
         "arex": ArexDiscoAdapter(settings.arex_disco_bin),
         "skillalchemy": SkillAlchemyAdapter(settings.skillalchemy_agent_bin),
+        "skillcreator": AnthropicSkillCreatorAdapter(settings.skillcreator_agent_bin, settings.skillcreator_skill_path),
     }
     health = {}
     for engine, adapter in adapters.items():

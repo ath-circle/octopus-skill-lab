@@ -221,6 +221,16 @@ class OpenWorldRequest(CreateJobRequest):
 
 
 class PersonalizeRequest(CreateJobRequest):
+    engine: str = Field(default="fixture", pattern=r"^(fixture|skillcreator|skillalchemy)$")
     baseline_version_id: UUID
     evidence_ids: list[UUID] = Field(min_length=1, max_length=100)
     dev_dataset_ids: list[UUID] = Field(default_factory=list, max_length=20)
+
+
+class FuseRequest(CreateJobRequest):
+    engine: str = Field(default="fixture", pattern=r"^(fixture|skillalchemy)$")
+    source_version_ids: list[UUID] = Field(min_length=2, max_length=12)
+    skill_slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    skill_name: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=10_000)
+    objective: str | None = Field(default=None, max_length=10_000)

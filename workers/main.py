@@ -47,6 +47,8 @@ class JobWorker:
         try:
             if job.job_type == "personalize":
                 await self._prepare_personalization_input(job, workspace)
+            elif job.job_type == "fuse":
+                await self._prepare_fusion_input(job, workspace)
             adapter = adapter_for(job.engine, self.settings)
             health = await adapter.healthcheck()
             if not health.available:
@@ -55,6 +57,8 @@ class JobWorker:
             archive = self.service.normalizer.archive_directory(str(result.artifact_directory))
             if job.job_type == "personalize":
                 skill, version = await self._register_personalized_candidate(job, archive, result.engine)
+            elif job.job_type == "fuse":
+                skill, version = await self._register_fusion(job, archive, result.engine)
             else:
                 request, source_type, source_uri, repo_ref = self._registration_inputs(job)
                 skill, version = await self.service.import_skill(
@@ -103,6 +107,31 @@ class JobWorker:
              "payload": {"baseline_version_id": str(baseline.id), "job_id": str(job.id), "evidence_count": len(job.input["evidence"]), "dev_case_count": len(job.input["dev_examples"])}}
         )
         return skill, candidate
+
+    async def _prepare_fusion_input(self, job, workspace: Path) -> None:
+        sources = []
+        for version_id in job.input["source_version_ids"]:
+            version = await self.repository.get_version(UUID(version_id))
+            if version is None:
+                raise ValueError("Fusion source disappeared before the job ran.")
+            destination = workspace / "input" / "sources" / str(version.id)
+            self._safe_extract(await self.service.artifacts.get(version.artifact_storage_path), destination)
+            sources.append({"version_id": str(version.id), "skill_id": str(version.skill_id), "version": version.version, "artifact_hash": version.artifact_hash})
+        (workspace / "input" / "fusion-context.json").write_text(json.dumps({"objective": job.input.get("objective"), "sources": sources}, indent=2, sort_keys=True) + "\n")
+
+    async def _register_fusion(self, job, archive: bytes, engine: str):
+        request = SkillCreate(slug=job.input["skill_slug"], name=job.input["skill_name"], description=job.input["description"])
+        skill, fused = await self.service.import_skill(
+            request, archive, "fused-candidate", created_by_engine=engine,
+            source_type="existing_skill", source_uri=f"fusion-job:{job.id}",
+        )
+        for version_id in job.input["source_version_ids"]:
+            await self.repository.create_lineage(UUID(version_id), fused.id, "fused_from")
+        await self.repository.create_audit_event(
+            {"aggregate_type": "skill_version", "aggregate_id": str(fused.id), "event_type": "skill.fused",
+             "payload": {"job_id": str(job.id), "source_version_ids": job.input["source_version_ids"]}}
+        )
+        return skill, fused
 
     @staticmethod
     def _next_minor_version(versions: list[str]) -> str:

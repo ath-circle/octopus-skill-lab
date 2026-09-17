@@ -11,6 +11,13 @@ class SkillAlchemyAdapter(SubprocessSkillEngine):
         super().__init__("skillalchemy", executable)
 
     async def run(self, job: Job, workspace: Path) -> EngineResult:
+        if job.job_type == "fuse":
+            prompt = (
+                "Create a new portable Agent Skill by fusing the immutable packages in input/sources, using input/fusion-context.json. "
+                "Keep source-specific constraints when they conflict; do not invent unsupported policies. "
+                "Write a complete package to output/skill with SKILL.md at its root and do not modify files outside the current workspace."
+            )
+            return await self._invoke(prompt, job, workspace)
         if job.job_type == "personalize":
             prompt = (
                 "Create a candidate revision of input/baseline using only input/personalization-context.json. "
