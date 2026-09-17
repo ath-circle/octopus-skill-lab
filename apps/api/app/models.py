@@ -151,6 +151,11 @@ class EvalRunRequest(BaseModel):
     engine: str = Field(default="fixture", pattern=r"^fixture$")
 
 
+class BatchEvalRequest(BaseModel):
+    baseline_version_id: UUID | None = None
+    engine: str = Field(default="fixture", pattern=r"^fixture$")
+
+
 class EvalRun(BaseModel):
     id: UUID
     skill_version_id: UUID
@@ -172,6 +177,11 @@ class EvalGateDecision(BaseModel):
     policy: dict
     summary: dict
     created_at: datetime
+
+
+class BatchEvalResult(BaseModel):
+    runs: list[EvalRun]
+    decision: EvalGateDecision
 
 
 class Job(BaseModel):

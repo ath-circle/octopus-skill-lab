@@ -163,7 +163,10 @@ class EvaluationService:
             if baseline is None or baseline.skill_id != candidate.skill_id:
                 raise LifecycleError("Baseline version must belong to the same Skill.")
 
-        await self.repository.lock_dataset(dataset.id)
+        # First use freezes a dataset; later candidate runs must be able to reuse
+        # the same immutable holdout rather than treating the lock as an error.
+        if not dataset.is_locked:
+            await self.repository.lock_dataset(dataset.id)
         cases = await self.repository.list_eval_cases(dataset.id)
         if not cases:
             raise LifecycleError("An evaluation dataset needs at least one case.")
@@ -202,6 +205,24 @@ class EvaluationService:
         )
         await self.repository.set_version_status(candidate.id, "passed" if gate.decision == "passed" else ("failed" if gate.decision == "failed" else "candidate"))
         return run, decision
+
+    async def run_holdouts(self, version_id: UUID, *, baseline_version_id: UUID | None, engine: str) -> tuple[list[EvalRun], EvalGateDecision]:
+        candidate = await self.repository.get_version(version_id)
+        if candidate is None:
+            raise LifecycleError("Skill version was not found.")
+        datasets = await self.repository.list_datasets(candidate.skill_id)
+        holdouts = [item for item in datasets if item.split == "holdout"]
+        if not holdouts:
+            raise LifecycleError("Create at least one holdout dataset before evaluating a candidate.")
+        runs: list[EvalRun] = []
+        for dataset in holdouts:
+            run, _ = await self.run(EvalRunRequest(
+                skill_version_id=candidate.id, dataset_id=dataset.id, baseline_version_id=baseline_version_id, engine=engine
+            ))
+            runs.append(run)
+        decision = await self.repository.get_latest_gate_decision(candidate.id)
+        assert decision is not None
+        return runs, decision
 
     @staticmethod
     def _fixture_result(case: EvalCase, has_baseline: bool) -> tuple[bool, bool]:

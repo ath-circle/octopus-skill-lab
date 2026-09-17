@@ -222,6 +222,12 @@ class SupabaseRegistryRepository:
         rows = await self._request("GET", "releases", params={"select": "*", "id": f"eq.{release_id}"})
         return Release.model_validate(rows[0]) if rows else None
 
+    async def list_releases(self, skill_id: UUID) -> list[Release]:
+        rows = await self._request(
+            "GET", "releases", params={"select": "*", "skill_id": f"eq.{skill_id}", "order": "released_at.desc"}
+        )
+        return [Release.model_validate(row) for row in rows]
+
     async def create_job(self, values: dict[str, Any]) -> Job:
         rows = await self._request("POST", "jobs", json=values, prefer="return=representation")
         return Job.model_validate(rows[0])

@@ -10,6 +10,8 @@ from .artifacts import ArtifactValidationError, SkillArchiveNormalizer, Supabase
 from .config import Settings, get_settings
 from .models import (
     CreateJobRequest,
+    BatchEvalRequest,
+    BatchEvalResult,
     EvalCase,
     EvalCaseCreate,
     EvalDataset,
@@ -292,10 +294,31 @@ async def run_evaluation(
         raise translate_error(exc) from exc
 
 
+@app.post("/versions/{version_id}/evaluate-holdouts", response_model=BatchEvalResult)
+async def evaluate_holdouts(
+    version_id: UUID, request: BatchEvalRequest, evaluator: EvaluationService = Depends(get_evaluation_service)
+) -> BatchEvalResult:
+    try:
+        runs, decision = await evaluator.run_holdouts(
+            version_id, baseline_version_id=request.baseline_version_id, engine=request.engine
+        )
+        return BatchEvalResult(runs=runs, decision=decision)
+    except Exception as exc:
+        raise translate_error(exc) from exc
+
+
 @app.get("/versions/{version_id}/eval-summary", response_model=EvalGateDecision | None)
 async def eval_summary(version_id: UUID, service: LifecycleService = Depends(get_service)) -> EvalGateDecision | None:
     try:
         return await service.repository.get_latest_gate_decision(version_id)
+    except Exception as exc:
+        raise translate_error(exc) from exc
+
+
+@app.get("/skills/{skill_id}/releases", response_model=list[Release])
+async def list_releases(skill_id: UUID, service: LifecycleService = Depends(get_service)) -> list[Release]:
+    try:
+        return await service.repository.list_releases(skill_id)
     except Exception as exc:
         raise translate_error(exc) from exc
 
