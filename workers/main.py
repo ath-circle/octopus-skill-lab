@@ -2,9 +2,12 @@
 
 import argparse
 import asyncio
+import io
 import json
 import re
+import zipfile
 from pathlib import Path
+from uuid import UUID
 
 from adapters.factory import adapter_for
 from apps.api.app.artifacts import SkillArchiveNormalizer, SupabaseArtifactStore
@@ -42,22 +45,22 @@ class JobWorker:
         await self.repository.set_job_workspace(job.id, str(workspace))
 
         try:
+            if job.job_type == "personalize":
+                await self._prepare_personalization_input(job, workspace)
             adapter = adapter_for(job.engine, self.settings)
             health = await adapter.healthcheck()
             if not health.available:
                 raise RuntimeError(f"Engine unavailable: {health.detail}")
             result = await adapter.run(job, workspace)
             archive = self.service.normalizer.archive_directory(str(result.artifact_directory))
-            request, source_type, source_uri, repo_ref = self._registration_inputs(job)
-            skill, version = await self.service.import_skill(
-                request,
-                archive,
-                filename=result.artifact_directory.name,
-                created_by_engine=result.engine,
-                source_type=source_type,
-                source_uri=source_uri,
-                repo_ref=repo_ref,
-            )
+            if job.job_type == "personalize":
+                skill, version = await self._register_personalized_candidate(job, archive, result.engine)
+            else:
+                request, source_type, source_uri, repo_ref = self._registration_inputs(job)
+                skill, version = await self.service.import_skill(
+                    request, archive, filename=result.artifact_directory.name, created_by_engine=result.engine,
+                    source_type=source_type, source_uri=source_uri, repo_ref=repo_ref,
+                )
             await self.repository.finish_job(
                 job.id,
                 "succeeded",
@@ -72,6 +75,55 @@ class JobWorker:
         except Exception as exc:
             await self.repository.finish_job(job.id, "failed", error=redact(str(exc)))
         return True
+
+    async def _prepare_personalization_input(self, job, workspace: Path) -> None:
+        baseline = await self.repository.get_version(UUID(job.input["baseline_version_id"]))
+        if baseline is None:
+            raise ValueError("Baseline version disappeared before the job ran.")
+        archive = await self.service.artifacts.get(baseline.artifact_storage_path)
+        destination = workspace / "input" / "baseline"
+        self._safe_extract(archive, destination)
+        context = {"baseline_version": baseline.version, "evidence": job.input["evidence"], "dev_examples": job.input["dev_examples"]}
+        (workspace / "input" / "personalization-context.json").write_text(json.dumps(context, indent=2, sort_keys=True) + "\n")
+
+    async def _register_personalized_candidate(self, job, archive: bytes, engine: str):
+        baseline_id = UUID(job.input["baseline_version_id"])
+        baseline = await self.repository.get_version(baseline_id)
+        if baseline is None:
+            raise ValueError("Baseline version disappeared before registration.")
+        versions = await self.repository.list_versions(baseline.skill_id)
+        next_version = self._next_minor_version([item.version for item in versions])
+        skill, candidate = await self.service.import_version(
+            baseline.skill_id, next_version, archive, "personalized-candidate",
+            created_by_engine=engine, source_uri=f"personalization-job:{job.id}",
+        )
+        await self.repository.create_lineage(baseline.id, candidate.id, "personalized_from")
+        await self.repository.create_audit_event(
+            {"aggregate_type": "skill_version", "aggregate_id": str(candidate.id), "event_type": "skill.personalized",
+             "payload": {"baseline_version_id": str(baseline.id), "job_id": str(job.id), "evidence_count": len(job.input["evidence"]), "dev_case_count": len(job.input["dev_examples"])}}
+        )
+        return skill, candidate
+
+    @staticmethod
+    def _next_minor_version(versions: list[str]) -> str:
+        parsed = [tuple(int(part) for part in value.split(".")) for value in versions]
+        major, minor, _ = max(parsed)
+        return f"{major}.{minor + 1}.0"
+
+    @staticmethod
+    def _safe_extract(archive: bytes, destination: Path) -> None:
+        with zipfile.ZipFile(io.BytesIO(archive)) as package:
+            for item in package.infolist():
+                path = (destination / item.filename).resolve()
+                if destination.resolve() not in path.parents and path != destination.resolve():
+                    raise ValueError("Baseline package contains an unsafe path.")
+                if item.is_dir():
+                    path.mkdir(parents=True, exist_ok=True)
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(package.read(item))
+        if not (destination / "SKILL.md").is_file():
+            raise ValueError("Baseline package is missing SKILL.md.")
 
     @staticmethod
     def _registration_inputs(job):

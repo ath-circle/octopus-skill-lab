@@ -208,3 +208,9 @@ class OpenWorldRequest(CreateJobRequest):
     skill_slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     skill_name: str = Field(min_length=1, max_length=160)
     constraints: list[str] = Field(default_factory=list)
+
+
+class PersonalizeRequest(CreateJobRequest):
+    baseline_version_id: UUID
+    evidence_ids: list[UUID] = Field(min_length=1, max_length=100)
+    dev_dataset_ids: list[UUID] = Field(default_factory=list, max_length=20)

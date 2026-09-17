@@ -22,6 +22,7 @@ from .models import (
     ImportResult,
     Job,
     OpenWorldRequest,
+    PersonalizeRequest,
     PromoteRequest,
     Release,
     RepoDistillRequest,
@@ -121,6 +122,34 @@ async def queue_open_world_creation(
         "constraints": request.constraints,
     }
     return await queue_job("distill_open_world", request.model_copy(update={"input": payload}), service)
+
+
+@app.post("/jobs/personalize", response_model=Job, status_code=201)
+async def queue_personalization(request: PersonalizeRequest, service: LifecycleService = Depends(get_service)) -> Job:
+    """Queue a candidate-only revision from selected evidence and dev examples."""
+    try:
+        baseline = await service.repository.get_version(request.baseline_version_id)
+        if baseline is None:
+            raise HTTPException(status_code=404, detail="Baseline Skill version was not found.")
+        evidence = await service.repository.get_evidence_by_ids(baseline.skill_id, request.evidence_ids)
+        if {item.id for item in evidence} != set(request.evidence_ids):
+            raise HTTPException(status_code=422, detail="Every selected evidence item must belong to the baseline Skill.")
+        dev_examples = []
+        for dataset_id in request.dev_dataset_ids:
+            dataset = await service.repository.get_dataset(dataset_id)
+            if dataset is None or dataset.skill_id != baseline.skill_id or dataset.split != "dev":
+                raise HTTPException(status_code=422, detail="Personalization accepts only dev datasets from the baseline Skill.")
+            dev_examples.extend((await service.repository.get_dev_eval_cases(dataset_id)))
+        payload = {
+            "baseline_version_id": str(baseline.id), "skill_id": str(baseline.skill_id),
+            "evidence": [item.model_dump(mode="json") for item in evidence],
+            "dev_examples": [item.model_dump(mode="json") for item in dev_examples],
+        }
+        return await queue_job("personalize", request.model_copy(update={"input": payload}), service)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise translate_error(exc) from exc
 
 
 @app.get("/jobs/{job_id}", response_model=Job)

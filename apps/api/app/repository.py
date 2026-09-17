@@ -94,6 +94,16 @@ class SupabaseRegistryRepository:
         )
         return [EvidenceItem.model_validate(row) for row in rows]
 
+    async def get_evidence_by_ids(self, skill_id: UUID, evidence_ids: list[UUID]) -> list[EvidenceItem]:
+        if not evidence_ids:
+            return []
+        requested = ",".join(str(item) for item in evidence_ids)
+        rows = await self._request(
+            "GET", "evidence_items",
+            params={"select": "*", "skill_id": f"eq.{skill_id}", "id": f"in.({requested})", "archived_at": "is.null"},
+        )
+        return [EvidenceItem.model_validate(row) for row in rows]
+
     async def create_dataset(self, values: dict[str, Any]) -> EvalDataset:
         rows = await self._request("POST", "eval_datasets", json=values, prefer="return=representation")
         return EvalDataset.model_validate(rows[0])
@@ -124,6 +134,16 @@ class SupabaseRegistryRepository:
     async def list_eval_cases(self, dataset_id: UUID) -> list[EvalCase]:
         rows = await self._request("GET", "eval_cases", params={"select": "*", "dataset_id": f"eq.{dataset_id}", "order": "created_at"})
         return [EvalCase.model_validate(row) for row in rows]
+
+    async def get_dev_eval_cases(self, dataset_id: UUID) -> list[EvalCase]:
+        rows = await self._request("POST", "rpc/get_dev_eval_cases", json={"p_dataset_id": str(dataset_id)})
+        return [EvalCase.model_validate(row) for row in rows]
+
+    async def create_lineage(self, parent_version_id: UUID, child_version_id: UUID, relation: str) -> None:
+        await self._request(
+            "POST", "skill_lineage",
+            json={"parent_version_id": str(parent_version_id), "child_version_id": str(child_version_id), "relation": relation},
+        )
 
     async def create_eval_run(self, values: dict[str, Any]) -> EvalRun:
         rows = await self._request("POST", "eval_runs", json=values, prefer="return=representation")
@@ -216,7 +236,9 @@ class SupabaseRegistryRepository:
 
     async def claim_next_job(self, lease_seconds: int = 300) -> Job | None:
         rows = await self._request("POST", "rpc/claim_next_skill_job", json={"p_lease_seconds": lease_seconds})
-        return Job.model_validate(rows[0]) if rows else None
+        # A Postgres function returning a composite row serializes SQL NULL as one
+        # object whose fields are all null, rather than as an empty response.
+        return Job.model_validate(rows[0]) if rows and rows[0].get("id") is not None else None
 
     async def set_job_workspace(self, job_id: UUID, workspace_path: str) -> None:
         await self._request(

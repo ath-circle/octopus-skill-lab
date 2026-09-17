@@ -49,7 +49,8 @@ class LifecycleService:
         )
 
     async def import_version(
-        self, skill_id: UUID, version: str, archive: bytes, filename: str
+        self, skill_id: UUID, version: str, archive: bytes, filename: str, *,
+        created_by_engine: str = "import", source_uri: str | None = None,
     ) -> tuple[Skill, SkillVersion]:
         skill = await self.repository.get_skill(skill_id)
         if skill is None:
@@ -62,9 +63,9 @@ class LifecycleService:
             version=version,
             create_skill=False,
             existing_skill=skill,
-            created_by_engine="import",
+            created_by_engine=created_by_engine,
             source_type="existing_skill",
-            source_uri=filename,
+            source_uri=source_uri or filename,
         )
 
     async def _store_import(

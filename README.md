@@ -14,6 +14,11 @@ adapters. V1.2 adds typed personal evidence, versioned dev/holdout datasets, imm
 datasets once evaluated, deterministic fixture evaluation, and persisted release-gate
 decisions. A non-passed version still needs a manual override with an audit reason.
 
+V1.3 adds `POST /jobs/personalize`: it creates an unpromoted candidate from a chosen
+baseline, selected evidence, and explicitly selected **dev** datasets. The worker
+extracts the immutable baseline package into its isolated workspace, registers the
+candidate as a new immutable version, and records `personalized_from` lineage.
+
 ## Prerequisites
 
 - Node.js 22+ and pnpm 11+
@@ -66,3 +71,11 @@ harness, not a claim that an external model was evaluated.
 
 Future optimization workers must obtain examples through the `get_dev_eval_cases`
 database function, which never returns holdout cases.
+
+## Candidate personalization
+
+`POST /jobs/personalize` accepts `baseline_version_id`, one or more `evidence_ids`,
+and optional `dev_dataset_ids`. The API rejects evidence or datasets belonging to a
+different Skill and rejects every non-dev dataset before the job is queued. The
+candidate still needs holdout evaluation and a passing gate before normal production
+promotion.
