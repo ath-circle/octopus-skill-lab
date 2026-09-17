@@ -1,0 +1,20 @@
+[project]
+name = "skill-factory"
+version = "0.1.0"
+description = "Skill lifecycle control plane"
+requires-python = ">=3.14"
+dependencies = [
+  "fastapi>=0.120,<1",
+  "httpx>=0.28,<1",
+  "pydantic-settings>=2.11,<3",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.37,<1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.4,<9"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
