@@ -241,9 +241,9 @@ async def engine_health() -> dict[str, dict[str, str | bool]]:
     settings = get_settings()
     adapters = {
         "fixture": FixtureSkillEngine(),
-        "arex": ArexDiscoAdapter(settings.arex_disco_bin),
-        "skillalchemy": SkillAlchemyAdapter(settings.skillalchemy_agent_bin, settings.skillalchemy_skill_path),
-        "skillcreator": AnthropicSkillCreatorAdapter(settings.skillcreator_agent_bin, settings.skillcreator_skill_path),
+        "arex": ArexDiscoAdapter(settings.arex_disco_bin, settings.engine_timeout_seconds),
+        "skillalchemy": SkillAlchemyAdapter(settings.skillalchemy_agent_bin, settings.skillalchemy_skill_path, settings.engine_timeout_seconds),
+        "skillcreator": AnthropicSkillCreatorAdapter(settings.skillcreator_agent_bin, settings.skillcreator_skill_path, settings.engine_timeout_seconds),
         "promptfoo": PromptfooAdapter(settings.promptfoo_bin, settings.promptfoo_enabled),
     }
     health = {}

@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 from apps.api.app.models import Job
@@ -13,9 +14,9 @@ class AnthropicSkillCreatorAdapter(SubprocessSkillEngine):
     and its absolute directory configured; otherwise this engine remains unavailable.
     """
 
-    def __init__(self, executable: str, skill_path: str) -> None:
-        super().__init__("skillcreator", executable)
-        self.skill_path = Path(skill_path).expanduser()
+    def __init__(self, executable: str, skill_path: str, timeout_seconds: int = 300) -> None:
+        super().__init__("skillcreator", executable, timeout_seconds)
+        self.skill_path = Path(skill_path).expanduser().resolve()
 
     async def healthcheck(self) -> EngineHealth:
         executable = await super().healthcheck()
@@ -29,8 +30,10 @@ class AnthropicSkillCreatorAdapter(SubprocessSkillEngine):
     async def run(self, job: Job, workspace: Path) -> EngineResult:
         if job.job_type != "personalize":
             raise RuntimeError("Skill Creator is reserved for personalize/improve jobs.")
+        staged_skill = workspace / "engine" / "skillcreator"
+        shutil.copytree(self.skill_path, staged_skill, symlinks=False)
         prompt = (
-            f"Read and follow the installed Anthropic Skill Creator at {self.skill_path / 'SKILL.md'}. "
+            "Read and follow engine/skillcreator/SKILL.md, the staged upstream Anthropic Skill Creator workflow. "
             "Improve input/baseline using only input/personalization-context.json. "
             "Compare candidate guidance to the baseline and preserve useful constraints. "
             "The context has selected evidence and dev examples only; do not seek or infer holdout data. "
@@ -40,5 +43,5 @@ class AnthropicSkillCreatorAdapter(SubprocessSkillEngine):
         if Path(self.executable).name == "claude":
             command = [self.executable, "--print", "--permission-mode", "acceptEdits", prompt]
         else:
-            command = [self.executable, "exec", "--skip-git-repo-check", "--sandbox", "workspace-write", "--approve-for-me", "-C", str(workspace), prompt]
+            command = [self.executable, "exec", "--skip-git-repo-check", "--approve-for-me", "-C", str(workspace), prompt]
         return await self._run_command(command, job, workspace)

@@ -10,9 +10,10 @@ from .base import EngineHealth, EngineResult
 class SubprocessSkillEngine:
     """Base adapter for engines that write a Skill directory to workspace/output/skill."""
 
-    def __init__(self, name: str, executable: str) -> None:
+    def __init__(self, name: str, executable: str, timeout_seconds: int = 300) -> None:
         self.name = name
         self.executable = executable
+        self.timeout_seconds = timeout_seconds
 
     async def healthcheck(self) -> EngineHealth:
         path = shutil.which(self.executable)
@@ -27,7 +28,14 @@ class SubprocessSkillEngine:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout_seconds)
+        except TimeoutError as exc:
+            process.kill()
+            stdout, stderr = await process.communicate()
+            stdout_path.write_bytes(stdout)
+            stderr_path.write_bytes(stderr)
+            raise RuntimeError(f"{self.name} timed out after {self.timeout_seconds} seconds") from exc
         stdout_path.write_bytes(stdout)
         stderr_path.write_bytes(stderr)
         artifact = workspace / "output" / "skill"

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     artifact_max_bytes: int = Field(default=50 * 1024 * 1024, alias="ARTIFACT_MAX_BYTES")
     workspace_root: str = Field(default="data/workspaces", alias="WORKSPACE_ROOT")
     job_poll_interval: float = Field(default=2.0, alias="JOB_POLL_INTERVAL")
+    engine_timeout_seconds: int = Field(default=300, alias="ENGINE_TIMEOUT_SECONDS")
     skill_factory_engine_mode: str = Field(default="fixture", alias="SKILL_FACTORY_ENGINE_MODE")
     arex_disco_bin: str = Field(default="disco", alias="AREX_DISCO_BIN")
     skillalchemy_agent_bin: str = Field(default="codex", alias="SKILLALCHEMY_AGENT_BIN")
